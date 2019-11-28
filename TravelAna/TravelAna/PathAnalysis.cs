@@ -660,6 +660,7 @@ namespace RuleCheck
 
             var result = new List<double>();
 
+
             using (Transaction trans1 = new Transaction(doc))
             {
                 trans1.Start("Correction");
@@ -685,7 +686,7 @@ namespace RuleCheck
                     }
                     result.Add(distance);
                 }
-                trans1.Commit();
+                trans1.RollBack();
             }
 
             var finalDis = new List<double>();
@@ -840,7 +841,9 @@ namespace RuleCheck
                 else
                     debug += finalPre[i].ToString() + "\n";
             }
+
             var finalResult = new List<double>();
+            var final_pass_doors = new List<int>();
             using (Transaction tran_final_1 = new Transaction(doc))
             {
 
@@ -858,6 +861,7 @@ namespace RuleCheck
                     int index = DoorIDs.FindIndex(a => a.IntegerValue == finalPre[i].IntegerValue);
 
                     XYZ end = DoorLocs[index];
+                    final_pass_doors.Add(index);
                     PathOfTravel p = PathOfTravel.Create(view, start, end);
                     double dist = calDis(p.GetCurves());
                     finalResult.Add(finalDis[i] + result[index]); 
@@ -865,7 +869,33 @@ namespace RuleCheck
                 tran_final_1.Commit();
             }
 
-         
+            using (Transaction trans1 = new Transaction(doc))
+            {
+                trans1.Start("Draw_final");
+                View view = doc.ActiveView;
+                foreach (List<int> path in Final_path)
+                {
+                    if (path == null)
+                    {
+                        continue;
+                    }
+                    if (!final_pass_doors.Contains(path[0]))
+                    {
+                        continue;
+                    }
+                    XYZ startpoint = DoorLocs[path[0]];
+                    XYZ endpoint;
+                    for (int i = 0; i < path.Count; i++)
+                    {
+                        endpoint = DoorLocs[path[i]];
+                        if (endpoint == null || startpoint == null) TaskDialog.Show("Error", DoorIDs[path[i]].ToString());
+                        if (path[i] == path[0]) continue;
+                        PathOfTravel p = PathOfTravel.Create(view, startpoint, endpoint);
+                        startpoint = endpoint;
+                    }
+                }
+                trans1.Commit();
+            }
 
             return new KeyValuePair<List<Room>, List<double>>(roomlist, finalResult);
         }
