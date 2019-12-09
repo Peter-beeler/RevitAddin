@@ -1,0 +1,1920 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Autodesk.Revit.ApplicationServices;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
+using Autodesk.Revit.DB.Analysis;
+using Autodesk.Revit.DB.Mechanical;
+using Form = System.Windows.Forms.Form;
+using System.Windows.Forms;
+using System.Security.Permissions;
+
+
+namespace RuleCheck
+{
+
+    [PermissionSet(SecurityAction.Demand, Name = "FullTrust")]
+    //public class icon : IExternalApplication
+    //{
+
+
+    //    public Result OnStartup(UIControlledApplication application)
+    //    {
+    //        String tabn = "new tab";
+    //        application.CreateRibbonTab(tabn);
+    //        Autodesk.Revit.UI.RibbonPanel rp = application.CreateRibbonPanel(tabn, "new panel");
+    //        string thispath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+    //        PushButton Cmnd1 = rp.AddItem(new PushButtonData("Created for test", "mycommand", thispath, "namespacename.externalcommandclassname")) as PushButton;
+    //        string mypath = String.Format(@"C:\Users\42974\Desktop\project\icon.png");
+    //        Uri image = new Uri(mypath);
+    //        BitmapImage largeimage = new BitmapImage(image);
+    //        Cmnd1.LargeImage = largeimage;
+    //        return Result.Succeeded;
+    //    }
+    //    public Result OnShutdown(UIControlledApplication application)
+    //    {
+    //        return Result.Succeeded;
+    //    }
+    //}
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class PathAnalysis : IExternalCommand
+    {
+        const int ROOMID = -2000160;
+        const int MAX_NUM = 999999999;
+        const double DOOR_HEIGHT = 2;
+        const double SINGLE_WIDTH = 2.6665;
+        const double DOUBLE_WIDTH_MIN = 5.33333;
+        const double DOUBLE_WIDTH_MAX = 8;
+        const double CEILING_HEIGHT = 6.6665;
+        const double RAMP_SLOPE = 12.5;
+        const double CORR_WID = 9.0;
+        const double RAMP_RISE = 2.5;
+        const double RAMP_WIDTH = 3;
+
+        const string ceiling_url = "https://codes.iccsafe.org/content/IBC2018/chapter-10-means-of-egress#IBC2018_Ch10_Sec1003";
+        const string egress_distance_url = "https://codes.iccsafe.org/content/IBC2018/chapter-10-means-of-egress#IBC2018_Ch10_Sec1017";
+        const string door_url = "https://codes.iccsafe.org/content/IBC2018/chapter-10-means-of-egress#IBC2018_Ch10_Sec1010";
+        const string ramp_url = "https://codes.iccsafe.org/content/IBC2018/chapter-10-means-of-egress#IBC2018_Ch10_Sec1012";
+        const string corridor_url = "https://codes.iccsafe.org/content/IBC2018/chapter-10-means-of-egress#IBC2018_Ch10_Sec1020";
+        string html_result = "";
+        string html_front = "<!DOCTYPE html><html><head>    <meta charset=\"utf-8\">    <title>Automated-checking Result</title>    <style type=\"text/css\">    /* gridtable */    table.gridtable {        font-family: verdana,arial,sans-serif;        font-size:11px;        color:#333333;        border-width: 1px;        border-color: #666666;        border-collapse: collapse;    }    table.gridtable th {        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #666666;        background-color: #dedede;    }    table.gridtable td {        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #666666;        background-color: #ffffff;    }    /* /gridtable */    /* imagetable */    table.imagetable {        font-family: verdana,arial,sans-serif;        font-size:11px;        color:#333333;        border-width: 1px;        border-color: #999999;        border-collapse: collapse;    }    table.imagetable th {        background:#b5cfd2 url('cell-blue.jpg');        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #999999;    }    table.imagetable td {        background:#dcddc0 url('cell-grey.jpg');        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #999999;    }    /* /imagetable */    /* altrowstable */    table.altrowstable {        font-family: verdana,arial,sans-serif;        font-size:11px;        color:#333333;        border-width: 1px;        border-color: #a9c6c9;        border-collapse: collapse;    }    table.altrowstable th {        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #a9c6c9;    }    table.altrowstable td {        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #a9c6c9;    }    .oddrowcolor{        background-color:#d4e3e5;    }    .evenrowcolor{        background-color:#c3dde0;    }    /* /altrowstable */    /* hovertable */    table.hovertable {        font-family: verdana,arial,sans-serif;        font-size:11px;        color:#333333;        border-width: 1px;        border-color: #999999;        border-collapse: collapse;    }    table.hovertable th {        background-color:#c3dde0;        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #a9c6c9;    }    table.hovertable tr {        background-color:#d4e3e5;    }    table.hovertable td {        border-width: 1px;        padding: 8px;        border-style: solid;        border-color: #a9c6c9;    }    /* /hovertable */    </style></head><body><h2>Elements not passed</h2><table class=\"altrowstable\" id=\"alternatecolor\">    <tr>       <th>Element's Category</th> <th>Name(ID)</th><th>Rule Keyword</th><th>Rule Lookup</th> <th>      Log      </th>   ";
+        string html_back = " </table><script type=\"text/javascript\">    function altRows(id){        if(document.getElementsByTagName){            var table = document.getElementById(id);            var rows = table.getElementsByTagName(\"tr\");            for(i = 0; i < rows.length; i++){                if(i % 2 == 0){                    rows[i].className = \"evenrowcolor\";                }else{                    rows[i].className = \"oddrowcolor\";                }            }        }    }    window.onload=function(){        altRows('alternatecolor');    }</script></body></html>";
+        string html_location = "D:\\";
+        public struct Dist
+        {
+            public double length;
+            public int pre;
+        }
+
+
+        //public static readonly string[] ROOMFORBID = new string[1] { "kitchen" };
+
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+        {
+            //Get application and documnet objects
+            UIApplication uiapp = commandData.Application;
+            UIDocument uidoc = uiapp.ActiveUIDocument;
+            Document doc = uiapp.ActiveUIDocument.Document;
+            Selection selection = uidoc.Selection;
+            ICollection<ElementId> selectedIds = uidoc.Selection.GetElementIds();
+            var EleIgnored = new List<ElementId>();
+            var levelid = ViewLevel(doc);
+            var rooms = GetRoomsOnLevel(doc, levelid);
+            var RoomIds = rooms.ToList();
+            string debug = "";
+
+
+            //CeilingCheck(doc, selectedIds);
+
+            //RoomNameTag(doc);
+            var RoomForbid = GetForbidRoom(doc, RoomIds);
+            var tmp = Colordoor(doc, RoomForbid);
+            var tmp1 = GetPointsInRoom(doc, uiapp, rooms, RoomForbid);
+            var rel = Graph(doc, RoomForbid, tmp1);
+            Report(rel, doc, RoomForbid);
+            DeleteBlock(doc, tmp);
+
+            //CheckRamp(doc, uiapp);
+
+            //CheckCorridor(doc);
+
+            //CheckDoor(doc);
+
+            //add_html("Door", "Single_Flush", "12345","height", door_url, "Door is too low");
+            //String path = "D:\\result.html";
+            //System.IO.File.WriteAllText(path, html_front+html_result+html_back);
+            //System.Diagnostics.Process.Start(path);
+
+            return Result.Succeeded;
+        }
+        
+        private void Report(KeyValuePair<List<Room>, List<double>> result, Document doc, IList<ElementId> RoomForbid)
+        {
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("Report");
+                var allRooms = result.Key;
+                var Distance = result.Value;
+                double dis;
+                string finalReport = "";
+                for (int i = 0; i < allRooms.Count; i++)
+                {
+                    Room room = allRooms[i];
+                    if (RoomForbid.Contains(room.Id)) continue;
+                    dis = Distance[i]/3.2808;
+                    finalReport = "";
+                    if (dis > (MAX_NUM - 1)) finalReport += "No egress path!";
+                    else
+                    {
+                        string tmp = dis.ToString();
+                        string[] rel = tmp.Split('.');
+
+                        finalReport += "Travel:"+rel[0] + "." + rel[1].Substring(0, 2) + "m";
+                    }
+                    AddTag(doc, room.Id, finalReport);
+                }
+                trans.Commit();
+            }
+            
+        }
+        //public KeyValuePair<List<ElementId>, List<double>> TravelDis(Document doc, ICollection<ElementId> selectedIds, List<ElementId> RoomsForbid) //distances of all rooms on current level to nearest exit
+        //{
+
+        //    View currentView = doc.ActiveView;
+
+        //    //door location
+        //    var doors = new List<ElementId>();
+        //    doors = GetExits(doc);
+        //    var doors_loc = new List<XYZ>();
+        //    foreach (ElementId id in doors)
+        //    {
+        //        Element door = doc.GetElement(id);
+        //        LocationPoint loc = door.Location as LocationPoint;
+        //        XYZ xyz = loc.Point;
+        //        doors_loc.Add(xyz);
+        //    }
+        //    //room location
+        //    var levelid = ViewLevel(doc);
+        //    var rooms = GetRoomsOnLevel(doc, levelid);
+        //    var final_rel = new List<double>();
+        //    var rooms_loc = CenterOfRoom(doc, rooms);
+
+        //    //TaskDialog.Show("Revit", doors_loc.Count.ToString());
+        //    //TaskDialog.Show("Revit", rooms_loc.Count.ToString());
+        //    var Exit2Door = new List<XYZ>();
+
+        //    using (TransactionGroup transGroup = new TransactionGroup(doc))
+        //    {
+        //        transGroup.Start("group start");
+        //        using (Transaction trans_del = new Transaction(doc))
+        //        {
+        //            trans_del.Start("Del");
+        //            foreach (ElementId id in RoomsForbid)
+        //            {
+        //                Element temp = doc.GetElement(id);
+        //                DeleteDoorsOfRoom(doc, id);
+        //            }
+        //            trans_del.Commit();
+        //        }
+        //        using (Transaction trans = new Transaction(doc))
+        //        {
+        //            if (trans.Start("Path") == TransactionStatus.Started)
+        //            {
+
+
+        //                //PathOfTravel.CreateMapped(currentView, rooms_loc, doors_loc);
+
+        //                //try to find the shortest path to the exits(one of)
+        //                //var ig = new List<ElementId>();
+        //                var settings = RouteAnalysisSettings.GetRouteAnalysisSettings(doc);
+        //                //foreach (ElementId id in selectedIds)
+        //                //{
+        //                //    Element temp = doc.GetElement(id);
+        //                //    ig.Add(temp.Category.Id);
+        //                //}
+        //                settings.SetIgnoredCategoryIds(selectedIds);
+        //                foreach (XYZ r in rooms_loc)
+        //                {
+        //                    double temp_len = 10000000;
+        //                    XYZ temp_loc = null;
+        //                    int cnt = 0;
+        //                    foreach (XYZ d in doors_loc)
+        //                    {
+        //                        PathOfTravel path = PathOfTravel.Create(currentView, r, d);
+        //                        if (path == null) continue;
+        //                        IList<Curve> p = path.GetCurves();
+        //                        if (temp_len >= calDis(p))
+        //                        {
+        //                            temp_loc = d;
+        //                            temp_len = calDis(p);
+        //                        }
+
+        //                    }
+        //                    Exit2Door.Add(temp_loc);
+        //                }
+        //                trans.RollBack();
+
+        //                //TaskDialog taskdialog = new TaskDialog("Revit");
+        //                //taskdialog.MainContent = "Click [OK] to commot and click [cancel] to roll back";
+        //                //TaskDialogCommonButtons buttons = TaskDialogCommonButtons.Ok | TaskDialogCommonButtons.Cancel;
+        //                //taskdialog.CommonButtons = buttons;
+        //                //if (TaskDialogResult.Ok == taskdialog.Show())
+        //                //{
+        //                //    if (TransactionStatus.Committed != trans.Commit()) {
+        //                //        TaskDialog.Show("Fail", "Trans can not be committed");
+        //                //    }
+        //                //}
+        //                //else {
+        //                //    trans.RollBack();
+        //                //}
+        //            }
+        //        }
+
+        //        var RoomsPoint = rooms_loc;
+
+        //        using (Transaction trans2 = new Transaction(doc))
+        //        {
+        //            if (trans2.Start("Path_final") == TransactionStatus.Started)
+        //            {
+
+        //                var settings = RouteAnalysisSettings.GetRouteAnalysisSettings(doc);
+
+        //                settings.SetIgnoredCategoryIds(selectedIds);
+        //                for (int i = 0; i < RoomsPoint.Count; i++)
+        //                {
+        //                    XYZ d = Exit2Door[i];
+        //                    XYZ r = RoomsPoint[i];
+        //                    Room temp_room = doc.GetRoomAtPoint(r);
+        //                    double halfDia = calHalfDia(temp_room);
+        //                    if (r == null || d == null)
+        //                    {
+        //                        final_rel.Add(MAX_NUM);
+        //                        continue;
+        //                    };
+        //                    IList<Curve> path = PathOfTravel.Create(currentView, r, d).GetCurves();
+        //                    final_rel.Add(calDis(path));
+        //                }
+        //                trans2.Commit();
+        //            }
+        //        }
+        //        transGroup.Assimilate();
+        //    }
+        //    var allRoomName = new List<ElementId>();
+        //    foreach (Room r in rooms) allRoomName.Add(r.Id);
+        //    return new KeyValuePair<List<ElementId>, List<double>>(allRoomName, final_rel);
+
+        //}
+        public IEnumerable<Room> GetRoomsOnLevel(Document doc, ElementId idLevel) //get all rooms on current level
+        {
+            return new FilteredElementCollector(doc)
+              .WhereElementIsNotElementType()
+              .OfClass(typeof(SpatialElement))
+              .Where(e => e.GetType() == typeof(Room))
+              .Where(e => e.LevelId.IntegerValue.Equals(
+               idLevel.IntegerValue))
+              .Cast<Room>();
+        }
+
+        public IEnumerable<Element> GetSpacesOnLevel(Document doc, ElementId idLevel) //get all rooms on current level
+        {
+            return new FilteredElementCollector(doc)
+              .WhereElementIsNotElementType()
+              .OfClass(typeof(SpatialElement))
+              .Where(e => e.Category.Id.IntegerValue == (int)BuiltInCategory.OST_MEPSpaces)
+              .Where(e => e.LevelId.IntegerValue.Equals(
+               idLevel.IntegerValue));
+        }
+        public Double calDis(IList<Curve> p) //cal the lenght of a travel path
+        {
+            double rel = 0;
+            foreach (Curve c in p)
+            {
+                rel += c.Length;
+            }
+            return rel;
+        }
+        public ElementId ViewLevel(Document doc)//get view of the current level
+        {
+            Autodesk.Revit.DB.View active = doc.ActiveView;
+            ElementId levelId = null;
+
+            Parameter level = active.LookupParameter("Associated Level");
+
+            FilteredElementCollector lvlCollector = new FilteredElementCollector(doc);
+            ICollection<Element> lvlCollection = lvlCollector.OfClass(typeof(Level)).ToElements();
+
+            foreach (Element l in lvlCollection)
+            {
+                Level lvl = l as Level;
+                if (lvl.Name == level.AsString())
+                {
+                    levelId = lvl.Id;
+                    //TaskDialog.Show("test", lvl.Name + "\n"  + lvl.Id.ToString());
+                }
+            }
+            return levelId;
+
+        }
+        public List<ElementId> GetExits(Document doc) //get all elements which are exits
+        {
+            ElementClassFilter familyInstancefilter = new ElementClassFilter(typeof(FamilyInstance));
+            ElementCategoryFilter doorfilter = new ElementCategoryFilter(BuiltInCategory.OST_Doors);
+            LogicalAndFilter doorInstancefilter = new LogicalAndFilter(familyInstancefilter, doorfilter);
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            ICollection<ElementId> doors = col.WherePasses(doorInstancefilter).ToElementIds();
+            var rel = new List<ElementId>();
+            foreach (ElementId id in doors)
+            {
+                Element door = doc.GetElement(id);
+                FamilyInstance doorfam = door as FamilyInstance;
+                Parameter temp = doorfam.Symbol.LookupParameter("Function");
+                if (temp.AsValueString() == "Exterior")
+                {
+                    rel.Add(id);
+                }
+            }
+            //TaskDialog.Show("Revit", rel.Count.ToString());
+            return rel;
+        }
+        public void DeleteEle(Document document, Element element)
+        {
+            // Delete an element via its id
+            ElementId elementId = element.Id;
+            ICollection<ElementId> deletedIdSet = document.Delete(elementId);
+
+            if (0 == deletedIdSet.Count)
+            {
+                throw new Exception("Deleting the selected element in Revit failed.");
+            }
+
+            String prompt = "The selected element has been removed and ";
+            prompt += deletedIdSet.Count - 1;
+            prompt += " more dependent elements have also been removed.";
+
+            // Give the user some information
+            //TaskDialog.Show("Revit", prompt);
+        }
+        public void DeleteDoorsOfRoom(Document doc, ElementId dangerRoom)
+        {
+            ElementClassFilter familyInstancefilter = new ElementClassFilter(typeof(FamilyInstance));
+            ElementCategoryFilter doorfilter = new ElementCategoryFilter(BuiltInCategory.OST_Doors);
+            LogicalAndFilter doorInstancefilter = new LogicalAndFilter(familyInstancefilter, doorfilter);
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            ICollection<ElementId> doors = col.WherePasses(doorInstancefilter).ToElementIds();
+            var rel = new List<ElementId>();
+            string debug = "";
+
+            foreach (ElementId id in doors)
+            {
+                Element door = doc.GetElement(id);
+                FamilyInstance doorfam = door as FamilyInstance;
+                Room temp1 = doorfam.FromRoom;
+                Room temp2 = doorfam.ToRoom;
+                if (temp1 != null && temp1.Id == dangerRoom)
+                {
+                    DeleteEle(doc, door);
+                    continue;
+                }
+                if (temp2 != null && temp2.Id == dangerRoom)
+                {
+                    DeleteEle(doc, door);
+                    continue;
+                }
+            }
+
+            //TaskDialog.Show("Revit", debug);
+
+        }
+        public IList<XYZ> CalPointOfRooms(Document doc, IEnumerable<Room> rooms, List<XYZ> Exit2Door, ICollection<ElementId> eleIg)
+        {
+            var rel = new List<XYZ>();
+            using (Transaction trans = new Transaction(doc))
+            {
+                if (trans.Start("Path") == TransactionStatus.Started)
+                {
+                    int count = 0;
+                    var settings = RouteAnalysisSettings.GetRouteAnalysisSettings(doc);
+                    settings.SetIgnoredCategoryIds(eleIg);
+                    foreach (Room room in rooms)
+                    {
+                        var exit = Exit2Door[count];
+                        BoundingBoxXYZ box = room.get_BoundingBox(null);
+                        Transform trf = box.Transform;
+                        XYZ min_xyz = box.Min;
+                        XYZ max_xyz = box.Max;
+                        XYZ minInCoor = trf.OfPoint(min_xyz);
+                        XYZ maxInCoor = trf.OfPoint(max_xyz);
+                        List<XYZ> temp = new List<XYZ>();
+                        temp.Add(new XYZ(minInCoor.X, maxInCoor.Y, minInCoor.Z));
+                        temp.Add(new XYZ(minInCoor.Y, maxInCoor.X, minInCoor.Z));
+                        temp.Add(new XYZ(maxInCoor.X, minInCoor.Y, minInCoor.Z));
+                        temp.Add(new XYZ(maxInCoor.Y, minInCoor.X, minInCoor.Z));
+
+                        XYZ final = null;
+                        double final_dis = MAX_NUM;
+                        foreach (XYZ r in temp)
+                        {
+                            if (!room.IsPointInRoom(r)) continue;
+                            PathOfTravel path = PathOfTravel.Create(doc.ActiveView, r, exit);
+                            if (path == null) continue;
+                            double dis = calDis(path.GetCurves());
+                            if (dis < final_dis)
+                            {
+                                final_dis = dis;
+                                final = r;
+                            }
+                        }
+                        if (final == null)
+                        {
+                            LocationPoint loc = room.Location as LocationPoint;
+                            XYZ xyz = loc.Point;
+                            rel.Add(xyz);
+                        }
+                        else
+                        {
+                            rel.Add(final);
+                        }
+                    }
+                    trans.RollBack();
+                }
+            }
+
+            //foreach (Room r in rooms)
+            //{
+            //    LocationPoint loc = r.Location as LocationPoint;
+            //    XYZ xyz = loc.Point;
+            //    rel.Add(xyz);
+            //}
+            return rel;
+        }
+        public IList<XYZ> CenterOfRoom(Document doc, IEnumerable<Room> rooms)
+        {
+            var rel = new List<XYZ>();
+            foreach (Room r in rooms)
+            {
+                LocationPoint loc = r.Location as LocationPoint;
+                XYZ xyz = loc.Point;
+                rel.Add(xyz);
+            }
+            return rel;
+        }
+        public double calHalfDia(Room room)
+        {
+            BoundingBoxXYZ box = room.get_BoundingBox(null);
+            Transform trf = box.Transform;
+            XYZ min_xyz = box.Min;
+            XYZ minInCoor = trf.OfPoint(min_xyz);
+            XYZ max_xyz = box.Max;
+            XYZ maxInCoor = trf.OfPoint(max_xyz);
+            XYZ point = new XYZ(maxInCoor.X, maxInCoor.Y, minInCoor.Z);
+            return minInCoor.DistanceTo(point) / 2;
+        }
+        public KeyValuePair<List<Room>, List<double>> Graph(Document doc, IList<ElementId> RoomForbid, KeyValuePair<List<Room>, List<List<XYZ>>> Points)
+        {
+            var levelid = ViewLevel(doc);
+            var rooms = GetRoomsOnLevel(doc, levelid);
+            var doors = GetAllDoors(doc, levelid);
+            var exits = GetExits(doc);
+            var RoomIDs = new List<ElementId>();
+            var DoorIDs = new List<ElementId>();
+            var AllIDs = new List<ElementId>();
+            foreach (ElementId d in doors)
+            {
+                DoorIDs.Add(d);
+                AllIDs.Add(d);
+            }
+            foreach (Room r in rooms)
+            {
+                RoomIDs.Add(r.Id);
+                AllIDs.Add(r.Id);
+            }
+
+            var forbidDoors = new List<Int32>();
+            foreach (ElementId did in doors)
+            {
+                FamilyInstance door = doc.GetElement(did) as FamilyInstance;
+                var from_room = door.FromRoom;
+                var to_room = door.ToRoom;
+                foreach (ElementId rid in RoomForbid)
+                {
+                    Room room = doc.GetElement(rid) as Room;
+                    if (from_room != null && from_room.Id.IntegerValue == room.Id.IntegerValue)
+                    {
+                        forbidDoors.Add(did.IntegerValue);
+                        break;
+                    }
+                    if (to_room != null && to_room.Id.IntegerValue == room.Id.IntegerValue)
+                    {
+                        forbidDoors.Add(did.IntegerValue);
+                        break;
+                    }
+                }
+            }
+
+            var mat_dim = DoorIDs.Count;
+            int[,] mat = new int[100, 100];
+            for (int i = 0; i < 100; i++)
+                for (int j = 0; j < 100; j++)
+                    mat[i, j] = 0;
+
+            foreach (ElementId id1 in DoorIDs)
+            {
+                int count = 0;
+                Element door1 = doc.GetElement(id1);
+                FamilyInstance doorfam1 = door1 as FamilyInstance;
+                Room temp1 = doorfam1.FromRoom;
+                Room temp2 = doorfam1.ToRoom;
+                int index1 = DoorIDs.FindIndex(a => a.IntegerValue == id1.IntegerValue);
+                foreach (ElementId id2 in DoorIDs)
+                {
+                    Element door2 = doc.GetElement(id2);
+                    FamilyInstance doorfam2 = door2 as FamilyInstance;
+                    Room temp1_1 = doorfam2.FromRoom;
+                    Room temp2_1 = doorfam2.ToRoom;
+                    int index2 = DoorIDs.FindIndex(a => a.IntegerValue == id2.IntegerValue);
+                    if (temp1 != null && temp1_1 != null && temp1.Id.IntegerValue == temp1_1.Id.IntegerValue && !(RoomForbid.Contains(temp1.Id)))
+                    {
+                        mat[index1,index2] = 1; count++;
+                        continue;
+                    }
+                    if (temp1 != null && temp2_1 != null && temp1.Id.IntegerValue == temp2_1.Id.IntegerValue && !(RoomForbid.Contains(temp1.Id)))
+                    {
+                        mat[index1, index2] = 1; count++;
+                        continue;
+                    }
+                    if (temp2 != null && temp2_1 != null && temp2.Id.IntegerValue == temp2_1.Id.IntegerValue && !(RoomForbid.Contains(temp2.Id)))
+                    {
+                        mat[index1, index2] = 1; count++;
+                        continue;
+                    }
+                    if (temp2 != null && temp1_1 != null && temp2.Id.IntegerValue == temp1_1.Id.IntegerValue && !(RoomForbid.Contains(temp2.Id)))
+                    {
+                        mat[index1, index2] = 1; count++;
+                        continue;
+                    }
+                }
+                if (forbidDoors.Contains(id1.IntegerValue))
+                {
+                    for (int i = 0; i < 100; i++)
+                        mat[index1, i] = 0;
+                }
+
+            }
+
+            var RoomLocs = new List<XYZ>();
+            var DoorLocs = new List<XYZ>();
+            var AllLocs = new List<XYZ>();
+            var LocsForbid = new List<XYZ>();
+            foreach (ElementId id in DoorIDs)
+            {
+                Element r = doc.GetElement(id);
+                LocationPoint loc = r.Location as LocationPoint;
+                XYZ xyz = loc.Point;
+                DoorLocs.Add(xyz);
+                AllLocs.Add(xyz);
+            }
+            foreach (ElementId id in RoomIDs)
+            {
+                Element r = doc.GetElement(id);
+                LocationPoint loc = r.Location as LocationPoint;
+                XYZ xyz = loc.Point;
+                RoomLocs.Add(xyz);
+                AllLocs.Add(xyz);
+                if (RoomForbid.Contains(id))
+                {
+                    LocsForbid.Add(xyz);
+                }
+            }
+            double[,] ajm = new double[100, 100];
+            for (int i = 0; i < mat_dim; i++)
+                for (int j = 0; j < mat_dim; j++)
+                    ajm[i, j] = -1;
+            IList<Curve>[,] pathMap = new IList<Curve>[mat_dim, mat_dim];
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("CAL");
+                int offset = DoorIDs.Count;
+                Autodesk.Revit.DB.View view = doc.ActiveView;
+                for (int i = 0; i < mat_dim; i++)
+                    for (int j = i; j < mat_dim; j++)
+                    {
+                        if (mat[i, j] == 0) continue;
+                        if (j == i) continue;
+                        PathOfTravel p = PathOfTravel.Create(view, DoorLocs[i], DoorLocs[j]);
+                        if (p == null)
+                        {
+
+                            continue;
+                        }
+                        var crs = p.GetCurves();
+                        pathMap[i, j] = crs;
+                        ajm[i, j] = calDis(crs);
+                        ajm[j, i] = ajm[i, j];
+                    }
+                trans.RollBack();
+            }
+            for (int i = 0; i < mat_dim; i++)
+                for (int j = 0; j < mat_dim; j++)
+                {
+                    if (i == j)
+                    {
+                        ajm[i, j] = 0;
+                        continue;
+                    }
+                    if (ajm[i, j] < 0) ajm[i, j] = MAX_NUM;
+
+                }
+
+            var dis = GetFloyd(ajm, mat_dim);
+            var final_rel = new List<double>();
+            var final_des = new List<int>();
+            foreach (ElementId rid in DoorIDs)
+            {
+                double len = MAX_NUM;
+                int des_node = -1;
+                int x = DoorIDs.FindIndex(a => a.IntegerValue == rid.IntegerValue);
+                foreach (ElementId did in exits)
+                {
+                    int y = DoorIDs.FindIndex(a => a.IntegerValue == did.IntegerValue);
+                    double tmp_len = dis[x, y].length;
+                    if (len >= tmp_len)
+                    {
+                        len = tmp_len;
+                        des_node = y;
+                    }
+                }
+                final_rel.Add(len);
+                final_des.Add(des_node);
+            }
+
+            var Final_path = new List<List<int>>();
+            for (int i = 0; i < DoorIDs.Count; i++)
+            {
+                var rid = DoorIDs[i];
+                if (final_rel[i] > MAX_NUM - 1 || forbidDoors.Contains(rid.IntegerValue))
+                {
+                    Final_path.Add(null);
+                    continue;
+                }
+                var nodes = new List<int>();
+                var dst = final_des[i];
+                int x = DoorIDs.FindIndex(a => a.IntegerValue == rid.IntegerValue);
+                nodes.Add(dst);
+                int pre = dis[x, dst].pre;
+                while (true)
+                {
+                    nodes.Add(pre);
+                    if (pre == x)
+                    {
+                        break;
+                    }
+                    pre = dis[x, pre].pre;
+                }
+                nodes.Reverse();
+                Final_path.Add(nodes);
+            }
+
+            var result = new List<double>();
+
+
+            using (Transaction trans1 = new Transaction(doc))
+            {
+                trans1.Start("Correction");
+                Autodesk.Revit.DB.View view = doc.ActiveView;
+                foreach (List<int> path in Final_path)
+                {
+                    if (path == null)
+                    {
+                        result.Add(MAX_NUM);
+                        continue;
+                    }
+                    XYZ startpoint = DoorLocs[path[0]];
+                    XYZ endpoint;
+                    double distance = 0;
+                    for (int i = 0; i < path.Count; i++)
+                    {
+                            endpoint = DoorLocs[path[i]];
+                            if (endpoint == null || startpoint == null) TaskDialog.Show("Error", DoorIDs[path[i]].ToString());
+                            if (path[i] == path[0]) continue;
+                            PathOfTravel p = PathOfTravel.Create(view, startpoint, endpoint);
+                            distance += calDis(p.GetCurves());
+                            startpoint = endpoint;
+                    }
+                    result.Add(distance);
+                }
+                trans1.RollBack();
+            }
+
+            var finalDis = new List<double>();
+            var finalPre = new List<ElementId>();
+            var finalPoints = new List<XYZ>();
+            var roomlist = Points.Key;
+
+ 
+            using (Transaction tran_final_0 = new Transaction(doc))
+            {
+                tran_final_0.Start("Determine the door");
+                
+                var pointInRoom = Points.Value;
+                Autodesk.Revit.DB.View view = doc.ActiveView;
+                int pcnt = 0;
+                //Room rtmp = roomlist[0];
+                //XYZ xyz1 = pointInRoom[0][0];
+                //foreach (ElementId id in DoorIDs)
+                //{
+                //    FamilyInstance door = doc.GetElement(id) as FamilyInstance;
+                //    if (door.ToRoom.Id.IntegerValue == rtmp.Id.IntegerValue || door.FromRoom.Id.IntegerValue == rtmp.Id.IntegerValue)
+                //    {
+                //        int index = DoorIDs.FindIndex(a => a.IntegerValue == id.IntegerValue);
+                //        PathOfTravel.Create(view, xyz1, DoorLocs[index]).GetCurves();
+                //        TaskDialog.Show("Error", "shithihsfd");
+                //        break;
+                //    }
+                //}
+                for (int i = 0; i < roomlist.Count; i++)
+                {
+                    var room = roomlist[i];
+                    var points = pointInRoom[i];
+                    var doorsToroom = new List<ElementId>();
+
+                    foreach (ElementId id in DoorIDs)
+                    {
+                        FamilyInstance door = doc.GetElement(id) as FamilyInstance;
+
+                        if (door.ToRoom != null && door.ToRoom.Id.IntegerValue == room.Id.IntegerValue)
+                        {
+                            doorsToroom.Add(id);
+                        }
+                        if (door.FromRoom != null && door.FromRoom.Id.IntegerValue == room.Id.IntegerValue)
+                        {
+                            doorsToroom.Add(id);
+                        }
+                    }
+
+                    int doorid = -1;
+                    double shortest_door = MAX_NUM;
+                    foreach (ElementId did in doorsToroom)
+                    {
+                        int index = DoorIDs.FindIndex(a => a.IntegerValue == did.IntegerValue);
+                        if (index < 0 || index >= result.Count) {
+                            TaskDialog.Show("INdex error", index.ToString());
+                        }
+                        if (result[index] <= shortest_door-1)
+                        {
+                            doorid = index;
+                            shortest_door = result[index];
+                        }
+                    }
+                    
+                    double dis_final = 0;
+                    ElementId des_door = null;
+                    XYZ finalPoint = null;
+                    if (doorid == -1)
+                    {
+                        dis_final = MAX_NUM;
+                        des_door = null;
+                        finalPoint = null;
+
+                    }
+                    else
+                    {
+                        foreach (XYZ xyz1 in points)
+                        {
+                            double tmp_dis_final = MAX_NUM;
+                            ElementId tmp_door = null;
+                            XYZ tmp_finalpoint = null;
+                            foreach (ElementId door in doorsToroom)
+                            {
+                                int near_doorid = DoorIDs.FindIndex(a => a.IntegerValue == door.IntegerValue);
+                                if(near_doorid <0 || near_doorid >= DoorLocs.Count)
+                                    TaskDialog.Show("Error", "Doorid" + doorid.ToString());
+                                XYZ xyz2 = DoorLocs[near_doorid];
+                                PathOfTravel p = PathOfTravel.Create(view, xyz1, xyz2);
+                                if (p == null)
+                                    continue;
+                                if ((calDis(p.GetCurves())+result[near_doorid]) < tmp_dis_final)
+                                {
+                                    tmp_dis_final = calDis(p.GetCurves())+result[near_doorid];
+                                    tmp_door = DoorIDs[near_doorid];
+                                    tmp_finalpoint = xyz1;
+                                }
+                                //if (doorid < 0 || doorid >= DoorLocs.Count)
+                                //    TaskDialog.Show("Error", "Doorid" + doorid.ToString());
+                                //XYZ xyz2 = DoorLocs[doorid];
+                                ////if (xyz1.DistanceTo(xyz2) < 10) continue;
+                                //PathOfTravel p = PathOfTravel.Create(view, xyz1, xyz2);
+                                //if (p == null) continue;
+                                //if (calDis(p.GetCurves()) > dis_final)
+                                //{
+                                //    dis_final = calDis(p.GetCurves());
+                                //    des_door = DoorIDs[doorid];
+                                //    finalPoint = xyz1;
+                                //}
+                            }
+                            if (tmp_door == null) continue;
+                            if (tmp_dis_final > dis_final)
+                            {
+                                dis_final = tmp_dis_final;
+                                des_door = tmp_door;
+                                finalPoint = tmp_finalpoint;
+                            }
+
+                        }
+                        //foreach (XYZ xyz1 in points)
+                        //{
+                        //    if (doorid < 0 || doorid >= DoorLocs.Count)
+                        //        TaskDialog.Show("Error", "Doorid" + doorid.ToString());
+                        //    XYZ xyz2 = DoorLocs[doorid];
+                        //    if (xyz1.DistanceTo(xyz2) < 10) continue;
+                        //    PathOfTravel p = PathOfTravel.Create(view, xyz1, xyz2);
+                        //    if (p == null) continue;
+                        //    if (calDis(p.GetCurves()) > dis_final)
+                        //    {
+                        //        dis_final = calDis(p.GetCurves());
+                        //        des_door = DoorIDs[doorid];
+                        //        finalPoint = xyz1;
+                        //    }
+
+
+                        //}
+                    }
+                    finalDis.Add(dis_final);
+                    finalPre.Add(des_door);
+                    finalPoints.Add(finalPoint);
+
+                }
+                tran_final_0.RollBack();
+            }
+            string debug = "";
+            for (int i = 0; i < finalPoints.Count; i++)
+            {
+                if (finalPoints[i] == null)
+                    debug += "null  ";
+                else
+                    debug += finalPoints[i].ToString() + "    ";
+                if (finalPre[i] == null)
+                    debug += "null\n";
+                else
+                    debug += finalPre[i].ToString() + "\n";
+            }
+
+            var finalResult = new List<double>();
+            var final_pass_doors = new List<int>();
+            using (Transaction tran_final_1 = new Transaction(doc))
+            {
+
+                Autodesk.Revit.DB.View view = doc.ActiveView;
+                tran_final_1.Start("Final");
+
+                for (int i = 0; i < finalPoints.Count; i++)
+                {
+                    if (finalPre[i] == null)
+                    {
+                        finalResult.Add(MAX_NUM);
+                        continue;
+                    }
+                    XYZ start = finalPoints[i];
+                    int index = DoorIDs.FindIndex(a => a.IntegerValue == finalPre[i].IntegerValue);
+
+                    XYZ end = DoorLocs[index];
+                    final_pass_doors.Add(index);
+                    PathOfTravel p = PathOfTravel.Create(view, start, end);
+                    double dist = calDis(p.GetCurves());
+                    finalResult.Add(dist + result[index]); 
+                }
+                tran_final_1.Commit();
+            }
+
+
+
+            using (Transaction trans1 = new Transaction(doc))
+            {
+                trans1.Start("Draw_final");
+                Autodesk.Revit.DB.View view = doc.ActiveView;
+                foreach (List<int> path in Final_path)
+                {
+                    if (path == null)
+                    {
+                        continue;
+                    }
+                    if (!final_pass_doors.Contains(path[0]))
+                    {
+                        continue;
+                    }
+                    XYZ startpoint = DoorLocs[path[0]];
+                    XYZ endpoint;
+                    for (int i = 0; i < path.Count; i++)
+                    {
+                        endpoint = DoorLocs[path[i]];
+                        if (endpoint == null || startpoint == null) TaskDialog.Show("Error", DoorIDs[path[i]].ToString());
+                        if (path[i] == path[0]) continue;
+                        PathOfTravel p = PathOfTravel.Create(view, startpoint, endpoint);
+                        startpoint = endpoint;
+                    }
+                }
+                trans1.Commit();
+            }
+
+            return new KeyValuePair<List<Room>, List<double>>(roomlist, finalResult);
+        }
+        public IList<ElementId> GetAllDoors(Document doc, ElementId levelid)
+        {
+            ElementClassFilter familyInstancefilter = new ElementClassFilter(typeof(FamilyInstance));
+            ElementCategoryFilter doorfilter = new ElementCategoryFilter(BuiltInCategory.OST_Doors);
+            LogicalAndFilter doorInstancefilter = new LogicalAndFilter(familyInstancefilter, doorfilter);
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            ICollection<ElementId> doors = col.WherePasses(doorInstancefilter).ToElementIds();
+            var rel = new List<ElementId>();
+            foreach (ElementId id in doors)
+            {
+                Element door = doc.GetElement(id);
+                if (door.LevelId == levelid) rel.Add(id);
+            }
+            return rel;
+        }
+        public Dist[,] GetFloyd(double[,] G, int N)
+        {
+            int i, j, v;
+            Dist[,] D = new Dist[N, N];
+            for (i = 0; i < N; i++)
+            {
+                for (j = 0; j < N; j++)
+                {
+                    if (i == j)
+                    {
+                        D[i, j].length = 0;
+                        D[i, j].pre = i;
+                    }
+                    else
+                    {
+                        if (G[i, j] < MAX_NUM - 1)
+                        {
+                            D[i, j].length = G[i, j];
+                            D[i, j].pre = i;
+                        }
+                        else
+                        {
+                            D[i, j].length = MAX_NUM;
+                            D[i, j].pre = -1;
+                        }
+                    }
+                }
+            }
+
+            for (v = 0; v < N; v++)
+            {
+                for (i = 0; i < N; i++)
+                {
+                    for (j = 0; j < N; j++)
+                    {
+                        if (D[i, j].length > (D[i, v].length + D[v, j].length))
+                        {
+                            D[i, j].length = D[i, v].length + D[v, j].length;
+                            D[i, j].pre = D[v, j].pre;
+                        }
+                    }
+                }
+            }
+
+            return D;
+        }
+        public IList<ElementId> GetForbidRoom(Document doc, IEnumerable<Room> Rooms)
+        {
+            var rel = new List<ElementId>();
+            string path = "D:\\Config.txt";
+            var str = "";
+            bool flag = false;
+            if (!System.IO.File.Exists(path))
+            {
+                flag = true;    
+            }
+            else
+            {
+                string line = "";
+                string names = "";
+                System.IO.StreamReader file = new System.IO.StreamReader(path);
+                while ((line = file.ReadLine()) != null)
+                {
+                    System.Console.WriteLine(line);
+                    var rel_line = line.Split(' ');
+                    int tag = Int32.Parse(rel_line[1]);
+                    if (tag==1) {
+                        foreach (Room r in Rooms)
+                        {
+                            if (r.Id.IntegerValue == Int32.Parse(rel_line[0]))
+                            {
+                                rel.Add(r.Id);
+                                names += r.Name + "\n";
+                            }
+                        }
+                    }
+                }
+
+                file.Close();
+
+                TaskDialog dialog = new TaskDialog("Forbidden Rooms");
+                dialog.MainContent = names + "\n" + "Do you need to change forbidden rooms?";
+                dialog.CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No;
+                TaskDialogResult result = dialog.Show();
+                if (result == TaskDialogResult.Yes)
+                {
+                    flag = true;
+                }
+            }
+            if (flag)
+            {
+                rel = new List<ElementId>();
+                foreach (Room room in Rooms)
+                {
+                    TaskDialog dialog = new TaskDialog("Is the Room Forbidden?");
+                    dialog.MainContent = room.Name + "\n" + "Is this room can not be passed?";
+                    dialog.CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No;
+
+                    TaskDialogResult result = dialog.Show();
+                    if (result == TaskDialogResult.Yes)
+                    {
+                        rel.Add(room.Id);
+                        str += room.Id.ToString() + " " + "1" + "\n";
+                    }
+                    else
+                    {
+                        str += room.Id.ToString() + " " + "0" + "\n";
+                    }
+                }
+                System.IO.File.WriteAllText(path, str);
+            }
+            
+            return rel;
+        }
+
+        public IList<ElementId> CheckDoor(Document doc)
+        {
+            ElementClassFilter familyInstancefilter = new ElementClassFilter(typeof(FamilyInstance));
+            ElementCategoryFilter doorfilter = new ElementCategoryFilter(BuiltInCategory.OST_Doors);
+            LogicalAndFilter doorInstancefilter = new LogicalAndFilter(familyInstancefilter, doorfilter);
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            ICollection<ElementId> doors = col.WherePasses(doorInstancefilter).ToElementIds();
+            Autodesk.Revit.DB.View view = doc.ActiveView;
+
+            var rel = new List<ElementId>();
+            var relstr = new List<string>();
+            foreach (ElementId id in doors)
+            {
+                string strtmp = "";
+                Element door = doc.GetElement(id);
+                bool flag = true;
+                FamilyInstance fs = door as FamilyInstance;
+                string Name = fs.Symbol.Name;
+                BoundingBoxXYZ box = door.get_BoundingBox(null);
+                Transform trf = box.Transform;
+                XYZ min_xyz = box.Min;
+                XYZ max_xyz = box.Max;
+                XYZ minInCoor = trf.OfPoint(min_xyz);
+                XYZ maxInCoor = trf.OfPoint(max_xyz);
+                double height = maxInCoor.Z - minInCoor.Z;
+                double width;
+                if ((maxInCoor.X - minInCoor.X) > (maxInCoor.Y - minInCoor.Y))
+                    width = maxInCoor.X - minInCoor.X;
+                else
+                    width = maxInCoor.Y - minInCoor.Y;
+                if (height < DOOR_HEIGHT)
+                {
+                    flag = false;
+                    strtmp += "Door too low";
+                }
+                if (Name.ToLower().Contains("double"))
+                {
+                    if (width < DOUBLE_WIDTH_MIN || width > DOUBLE_WIDTH_MAX)
+                    {
+                        flag = false;
+                        strtmp += "Door too narrow or too wide";
+                    }
+
+                }
+                else
+                {
+                    if (width < SINGLE_WIDTH)
+                    {
+                        flag = false;
+                        strtmp += "Door too narrow or too wide";
+                    }
+                }
+
+                if (flag == false)
+                {
+                    rel.Add(id);
+                    relstr.Add(strtmp);
+                }
+            }
+
+
+
+            //if (rel.Count != 0)
+            //{
+            //    string Error = "";
+            //    foreach (ElementId id in rel)
+            //    {
+            //        Error += id.ToString() + "\n";
+            //    }
+            //    TaskDialog td = new TaskDialog("Door Error");
+            //    td.MainIcon = TaskDialogIcon.TaskDialogIconWarning;
+            //    td.MainInstruction = "Error, following doors' height or width don't satisfy!.\n Their ids:";
+            //    td.MainContent = Error;
+            //    TaskDialogResult tdRes = td.Show();
+            //    HighLight(doc, rel);
+            //}
+            Color(doc, rel,"R");
+            WriteRel(new KeyValuePair<List<ElementId>, List<string>>(rel, relstr));
+            return rel;
+        }
+
+        public void HighLight(Document doc, IList<ElementId> id)
+        {
+            ICollection<ElementId> ids = new List<ElementId>();
+
+            foreach (ElementId i in id)
+                ids.Add(i);
+
+            UIDocument uiDoc = new UIDocument(doc);
+            if (ids.Count == 0) return;
+            uiDoc.Selection.SetElementIds(ids);
+
+            uiDoc.ShowElements(ids);
+        }
+        public Result CeilingCheck(Document doc,ICollection<ElementId> roomids) 
+        {
+            var rooms = new List<Room>();
+            foreach (ElementId id in roomids)
+            {
+                Element room = doc.GetElement(id);
+                if (room.Category.Id.IntegerValue == (int)BuiltInCategory.OST_Rooms)
+                    rooms.Add(room as Room);
+            }
+            var elementsInView = GetRoomEle(rooms);
+            var rel = new List<ElementId>();
+            if (elementsInView.Count >= 1)
+            {
+                foreach (Element e in elementsInView)
+                {
+                    string name = e.Name.ToLower();
+                    if (name.Contains("window") || name.Contains("door") || name.Contains("wall"))
+                        continue;
+                    FamilyInstance skylight = e as FamilyInstance;
+                    if (skylight == null)
+                        continue;
+                    try
+                    {
+                        double line = CalculateLineAboveFloor(doc, skylight);
+                        if (line <= CEILING_HEIGHT && line >= 2.25)
+                            rel.Add(e.Id);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                    
+                }
+            }
+
+            if (rel.Count != 0)
+            { 
+                var relstr = new List<string>();
+                foreach (ElementId id in rel)
+                {
+                    relstr.Add("Headroom not enough");
+                }
+                Color(doc, rel,"R");
+                WriteRel(new KeyValuePair<List<ElementId>, List<string>>(rel,relstr));
+            }
+
+            return Result.Succeeded;
+        }
+
+        /// <summary>
+        /// Determines the line segment that connects the skylight to the nearest floor.
+        /// </summary>
+        /// <returns>The line segment.</returns>
+        private double CalculateLineAboveFloor(Document doc, FamilyInstance skylight)
+        {
+            // Find a 3D view to use for the ReferenceIntersector constructor
+            FilteredElementCollector collector = new FilteredElementCollector(doc);
+            Func<View3D, bool> isNotTemplate = v3 => !(v3.IsTemplate);
+            View3D view3D = collector.OfClass(typeof(View3D)).Cast<View3D>().First<View3D>(isNotTemplate);
+
+            // Use the center of the skylight bounding box as the start point.
+            if (skylight == null) TaskDialog.Show("Revit", "Error");
+            BoundingBoxXYZ box = skylight.get_BoundingBox(view3D);
+            XYZ center = box.Min;
+
+            // Project in the negative Z direction down to the floor.
+            XYZ rayDirection = new XYZ(0, 0, -1);
+            ElementClassFilter filter = new ElementClassFilter(typeof(Floor));
+
+            ReferenceIntersector refIntersector = new ReferenceIntersector(filter, FindReferenceTarget.Face, view3D);
+            ReferenceWithContext referenceWithContext = refIntersector.FindNearest(center, rayDirection);
+
+            Reference reference = referenceWithContext.GetReference();
+            XYZ intersection = reference.GlobalPoint;
+
+            // Create line segment from the start point and intersection point.
+            Line result = Line.CreateBound(center, intersection);
+            return result.Length;
+        }
+        public List<Element> GetRoomEle(IList<Room> rooms)
+        {
+            List<Element> a = new List<Element>();
+            foreach (Room room in rooms)
+            {
+                
+                BoundingBoxXYZ bb = room.get_BoundingBox(null);
+               
+                Outline outline = new Outline(bb.Min, bb.Max);
+
+                BoundingBoxIntersectsFilter filter
+                  = new BoundingBoxIntersectsFilter(outline);
+                
+                Document doc = room.Document;
+
+                // Todo: add category filters and other
+                // properties to narrow down the results
+
+                FilteredElementCollector collector
+                  = new FilteredElementCollector(doc)
+                    .WhereElementIsNotElementType()
+                    .WhereElementIsViewIndependent()
+                    .OfClass(typeof(FamilyInstance))
+                    .WherePasses(filter);
+
+                int roomid = room.Id.IntegerValue;
+
+
+                
+                foreach (FamilyInstance fi in collector)
+                {
+                    a.Add(fi as Element);
+                }
+            }
+            return a;
+        }
+        public KeyValuePair<List<Room>, List<List<XYZ>>> GetPointsInRoom(Document doc, UIApplication uiapp,IEnumerable<Room> rooms,IList<ElementId> RoomForbid)
+        {
+            String str = "";
+            var levelid = ViewLevel(doc);
+            var allSpaces = GetSpacesOnLevel(doc, levelid);
+            var roomList = new List<Room>();
+            var roomPoint = new List<List<XYZ>>();
+            var ForbidRoom = new List<Int32>();
+            foreach (ElementId id in RoomForbid)
+                ForbidRoom.Add(id.IntegerValue);
+            foreach (Room ele in rooms)
+            {
+                if (!ForbidRoom.Contains(ele.Id.IntegerValue))
+                    roomList.Add(ele);
+            }
+            for (int i = 0; i < roomList.Count; i++)
+            {
+                roomPoint.Add(new List<XYZ>());
+            }
+            Options geomOption = uiapp.Application.Create.NewGeometryOptions();
+            if (null != geomOption)
+            {
+                geomOption.ComputeReferences = true;
+                geomOption.DetailLevel = ViewDetailLevel.Coarse;
+            }
+            foreach (Element ele in allSpaces)
+            {
+                Space s = ele as Space;
+                Room r = s.Room;
+                if (ForbidRoom.Contains(r.Id.IntegerValue)) continue;
+                int index = roomList.FindIndex(a => a.Id == r.Id);
+                GeometryElement geo = s.get_Geometry(geomOption);
+                var rel = new List<XYZ>();
+                XYZ start, pre = null;
+                int count = 0;
+                BoundingBoxXYZ bb = s.get_BoundingBox(null);
+                XYZ min = bb.Min;
+                XYZ max = bb.Max;
+                roomPoint[index].Add(new XYZ(min.X+0.1, min.Y+0.1, min.Z));
+                roomPoint[index].Add(new XYZ(min.X+0.1, max.Y-0.1, min.Z));
+                roomPoint[index].Add(new XYZ(max.X-0.1, min.Y+0.1, min.Z));
+                roomPoint[index].Add(new XYZ(max.X-0.1, max.Y-0.1, max.Z));
+
+                //foreach (GeometryObject geomObj in geo)
+                //{
+                //    Solid geoSolid = geomObj as Solid;
+
+                //    if (geoSolid != null)
+                //    {
+                //        foreach (Edge edge in geoSolid.Edges)
+                //        {
+                //            start = edge.AsCurve().GetEndPoint(0);
+                //            if (r.IsPointInRoom(start))
+                //            {
+                //                if (count == 0)
+                //                {
+                //                    roomPoint[index].Add(start);
+                //                    count++;
+                //                }
+                //                else
+                //                {
+                //                    if (start.DistanceTo(roomPoint[index].Last<XYZ>()) > 3)
+                //                    {
+                //                        roomPoint[index].Add(start);
+                //                        count++;
+                //                    }
+                //                }
+                //            }
+                //        }
+
+                //    }
+
+                //}
+
+            }
+            return new KeyValuePair<List<Room>, List<List<XYZ>>>(roomList, roomPoint);
+        }
+        public TextNote AddTag(Document doc,ElementId id,string cont)
+        {
+            LocationPoint locPoint = doc.GetElement(id).Location as LocationPoint;
+            XYZ textloc = locPoint.Point;
+
+            ElementId defaultTextTypeId = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
+            double noteWidth = .2;
+
+            // make sure note width works for the text type
+            double minWidth = TextNote.GetMinimumAllowedWidth(doc, defaultTextTypeId);
+            double maxWidth = TextNote.GetMaximumAllowedWidth(doc, defaultTextTypeId);
+            if (noteWidth < minWidth)
+            {
+                noteWidth = minWidth;
+            }
+            else if (noteWidth > maxWidth)
+            {
+                noteWidth = maxWidth;
+            }
+
+            TextNoteOptions opts = new TextNoteOptions(defaultTextTypeId);
+            opts.HorizontalAlignment = HorizontalTextAlignment.Left;
+            opts.Rotation = 0;
+
+            XYZ textloc2 = new XYZ(textloc.X, textloc.Y + 2, textloc.Z);
+            TextNote textNote = TextNote.Create(doc, doc.ActiveView.Id, textloc2, noteWidth,cont, opts);
+
+            return textNote;
+        }
+        public IList<ElementId> CheckRamp(Document doc,UIApplication uiapp)
+        {
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            var rampids = col.OfCategory(BuiltInCategory.OST_Ramps).WhereElementIsNotElementType().ToElementIds();
+            var rel = new List<ElementId>();
+            var relstr = new List<string>();
+            foreach (ElementId rampid in rampids)
+            {
+                Element ramp = doc.GetElement(rampid);
+                BoundingBoxXYZ bb = ramp.get_BoundingBox(null);
+                XYZ min = bb.Min;
+                XYZ max = bb.Max;
+                ElementType type = doc.GetElement(ramp.GetTypeId()) as ElementType;
+                Parameter p = type.get_Parameter(BuiltInParameter.RAMP_ATTR_MIN_INV_SLOPE);
+                if (p.AsDouble() > RAMP_SLOPE)
+                {
+                    rel.Add(ramp.Id);
+                    relstr.Add("Ramp is too steep!");
+                }
+                double lift = max.Z - min.Z;
+                if (lift > RAMP_RISE)
+                {
+                    rel.Add(ramp.Id);
+                    relstr.Add("Ramp rise is too high!");
+                }
+                double width = Math.Min(Math.Abs(max.X - min.X), Math.Abs(max.Y - min.Y));
+                if (width < RAMP_WIDTH)
+                {
+                    rel.Add(ramp.Id);
+                    relstr.Add("Ramp is too narrow!");
+                }
+                
+
+            }
+            Color(doc, rel,"R");
+            WriteRel(new KeyValuePair<List<ElementId>, List<string>>(rel, relstr));
+            return rel;
+        }
+        public IList<ElementId> CheckCorridor(Document doc)
+        {
+            ElementCategoryFilter spacefilter = new ElementCategoryFilter(BuiltInCategory.OST_MEPSpaces);
+            FilteredElementCollector col = new FilteredElementCollector(doc);
+            ICollection<ElementId> spaces = col.WherePasses(spacefilter).ToElementIds();
+            var rel = new List<ElementId>();
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("Corridor");
+                foreach (ElementId id in spaces)
+                {
+                    Element space = doc.GetElement(id);
+                    if (space.Name.ToLower().Contains("corridor"))
+                    {
+                        BoundingBoxXYZ bb = space.get_BoundingBox(null);
+                        XYZ max = bb.Max;
+                        XYZ min = bb.Min;
+                        double dim1 = max.Y - min.Y;
+                        double dim2 = max.X - min.X;
+                        double width = dim1 < dim2 ? dim1 : dim2;
+                        if (width < CORR_WID)
+                        {
+                            string tmp = width.ToString();
+                            string[] wid = tmp.Split('.');
+                            string finalReport = "Cor_Wid:" + wid[0] + "." + wid[1].Substring(0, 2) + "ft";
+                            rel.Add(id);
+                            AddTag(doc, id, finalReport);
+                        }
+                        else
+                            continue;
+                    }
+                }
+                trans.Commit();
+            }
+            return rel;
+        }
+
+        public void Color(Document doc, List<ElementId> ids,String s)
+        {
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("Highlight");
+                Color color = null;
+                if (s.Equals("R"))
+                    color = new Color(255, 0, 0); // RGB
+                else if(s.Equals("G"))
+                    color = new Color(0, 255, 0); // RGB
+                else
+                    color = new Color(0, 0, 255); // RGB
+                OverrideGraphicSettings ogs = new OverrideGraphicSettings();
+                ogs.SetProjectionLineColor(color); // or other here
+                foreach (ElementId id in ids)
+                {
+
+                    doc.ActiveView.SetElementOverrides(id, ogs);
+                }
+                trans.Commit();
+            }
+        }
+        public void WriteRel(KeyValuePair<List<ElementId>, List<string>> rel)
+        {
+            string path = "D:\\AnaResult.txt";
+            var str = "";
+            var key = rel.Key;
+            var value = rel.Value;
+            for (int i = 0; i < key.Count; i++)
+            {
+                var id = key[i];
+                var relstr = value[i];
+                str += id.ToString() + "-" + relstr + "\n";
+            }
+            System.IO.StreamWriter file = new System.IO.StreamWriter(path,false);
+            file.Write(str);
+            file.Flush();
+            file.Close();
+            
+        }
+        public void RoomNameTag(Document doc)
+        {
+            var roomslist = GetRoomsOnLevel(doc, ViewLevel(doc));
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("RoomName");
+                foreach (Room room in roomslist)
+                {
+                    AddTag(doc, room.Id, room.Name);
+                }
+                trans.Commit();
+            }
+        }
+        public List<ElementId> BlockDoors(Document doc, List<ElementId> Doors)
+        {
+            var rel = new List<ElementId>();
+            ElementId wallTypeId = doc.GetDefaultElementTypeId(ElementTypeGroup.WallType);// replace var with Element Id (statically-typed)
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("Block!");
+                foreach (ElementId did in Doors)
+                {
+                    Element door = doc.GetElement(did);
+                    FamilyInstance doorfam = door as FamilyInstance;
+                    BoundingBoxXYZ bb = door.get_BoundingBox(null);
+                    XYZ temp_a = bb.Min;
+                    XYZ temp_b = bb.Max;
+                    XYZ point_a = null;
+                    XYZ point_b = null;
+                   
+                    if (Math.Abs(doorfam.FacingOrientation.X - 1) < 1e-6)
+                    {
+                        point_a = temp_a;
+                        point_b = new XYZ(temp_a.X - 0.3, temp_b.Y, temp_a.Z);
+                    }
+                    else if(Math.Abs(doorfam.FacingOrientation.X + 1) < 1e-6)
+                    {
+                        point_a = new XYZ(temp_b.X + 0.3, temp_a.Y, temp_a.Z);
+                        point_b = new XYZ(temp_b.X + 0.3, temp_b.Y, temp_a.Z);
+                    }
+                  
+                    else if (Math.Abs(doorfam.FacingOrientation.Y - 1) < 1e-6)
+                    {
+                        point_a = new XYZ(temp_a.X, temp_a.Y-0.3, temp_a.Z);
+                        point_b = new XYZ(temp_b.X, temp_a.Y-0.3, temp_a.Z);
+                    }
+                    else
+                    {
+                        point_a = new XYZ(temp_a.X, temp_b.Y+0.3, temp_a.Z);
+                        point_b = new XYZ(temp_b.X, temp_b.Y+0.3, temp_a.Z);
+                    }
+                    
+                    Curve line = Line.CreateBound(point_a, point_b) as Curve; // Create a bound curve for function to work, a wall cannot be created with unbound line
+                    Wall wall = Wall.Create(doc, line, ViewLevel(doc), false);
+                    rel.Add(wall.Id);
+                }
+                trans.Commit();
+            }
+            return rel;
+        }
+        public void DeleteBlock(Document doc, List<ElementId> walls)
+        {
+            using (Transaction trans = new Transaction(doc))
+            {
+                trans.Start("Begin");
+                doc.Delete(walls);
+                trans.Commit();
+            }
+        }
+        public List<ElementId> Colordoor(Document doc, IList<ElementId> rel)
+        {
+            var resDoor = new List<ElementId>();
+            var adDoor = new List<ElementId>();
+            var doorids = GetAllDoors(doc, ViewLevel(doc));
+
+            foreach (ElementId did in doorids)
+            {
+                Element door = doc.GetElement(did);
+                bool flag = false;
+                FamilyInstance doorfam = door as FamilyInstance;
+                Room temp1 = doorfam.FromRoom;
+                Room temp2 = doorfam.ToRoom;
+                foreach (ElementId id in rel)
+                {
+                    if (temp1 != null && temp1.Id.IntegerValue == id.IntegerValue)
+                    {
+                        resDoor.Add(did);
+                        flag = true;
+                    }
+                    else if (temp2 != null && temp2.Id.IntegerValue == id.IntegerValue)
+                    {
+                        resDoor.Add(did);
+                        flag = true;
+                    }
+                }
+                if (flag == false)
+                {
+                    adDoor.Add(did);
+                }
+            }
+            Color(doc, resDoor, "R");
+            Color(doc, adDoor, "G");
+            return BlockDoors(doc, resDoor);
+        }
+
+        public void add_html(string category, string Name, string Id,string Keyword, string url, string log)
+        {
+            string tmp = "<tr>"
+        +"<td>" +category + "</td><td>" + Name+"("+Id+")" + "</td>"+"<td>"+Keyword+"</td>"+"<td>" + "<a href =" + url+">Rule Link</a>" + "</td><td>" + log + "</td>"
+        + "</tr>";
+            html_result += tmp;
+        }
+
+    }
+    //public class Form1: Form
+    //{
+    //    public Form1(string html)
+    //    {
+    //        // Create the form layout. If you are using Visual Studio, 
+    //        // you can replace this code with code generated by the designer. 
+    //        InitializeForm();
+
+    //        // The following events are not visible in the designer, so 
+    //        // you must associate them with their event-handlers in code.
+    //        webBrowser1.CanGoBackChanged +=
+    //            new EventHandler(webBrowser1_CanGoBackChanged);
+    //        webBrowser1.CanGoForwardChanged +=
+    //            new EventHandler(webBrowser1_CanGoForwardChanged);
+    //        webBrowser1.DocumentTitleChanged +=
+    //            new EventHandler(webBrowser1_DocumentTitleChanged);
+    //        webBrowser1.StatusTextChanged +=
+    //            new EventHandler(webBrowser1_StatusTextChanged);
+
+    //        // Load the user's home page.
+    //        webBrowser1.DocumentText = html;
+    //    }
+
+    //    // Displays the Save dialog box.
+    //    private void saveAsToolStripMenuItem_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.ShowSaveAsDialog();
+    //    }
+
+    //    // Displays the Page Setup dialog box.
+    //    private void pageSetupToolStripMenuItem_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.ShowPageSetupDialog();
+    //    }
+
+    //    // Displays the Print dialog box.
+    //    private void printToolStripMenuItem_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.ShowPrintDialog();
+    //    }
+
+    //    // Displays the Print Preview dialog box.
+    //    private void printPreviewToolStripMenuItem_Click(
+    //        object sender, EventArgs e)
+    //    {
+    //        webBrowser1.ShowPrintPreviewDialog();
+    //    }
+
+    //    // Displays the Properties dialog box.
+    //    private void propertiesToolStripMenuItem_Click(
+    //        object sender, EventArgs e)
+    //    {
+    //        webBrowser1.ShowPropertiesDialog();
+    //    }
+
+    //    // Selects all the text in the text box when the user clicks it. 
+    //    private void toolStripTextBox1_Click(object sender, EventArgs e)
+    //    {
+    //        toolStripTextBox1.SelectAll();
+    //    }
+
+    //    // Navigates to the URL in the address box when 
+    //    // the ENTER key is pressed while the ToolStripTextBox has focus.
+    //    private void toolStripTextBox1_KeyDown(object sender, KeyEventArgs e)
+    //    {
+    //        if (e.KeyCode == Keys.Enter)
+    //        {
+    //            Navigate(toolStripTextBox1.Text);
+    //        }
+    //    }
+
+    //    // Navigates to the URL in the address box when 
+    //    // the Go button is clicked.
+    //    private void goButton_Click(object sender, EventArgs e)
+    //    {
+    //        Navigate(toolStripTextBox1.Text);
+    //    }
+
+    //    // Navigates to the given URL if it is valid.
+    //    private void Navigate(String address)
+    //    {
+    //        if (String.IsNullOrEmpty(address)) return;
+    //        if (address.Equals("about:blank")) return;
+    //        if (!address.StartsWith("http://") &&
+    //            !address.StartsWith("https://"))
+    //        {
+    //            address = "http://" + address;
+    //        }
+    //        try
+    //        {
+    //            webBrowser1.Navigate(new Uri(address));
+    //        }
+    //        catch (System.UriFormatException)
+    //        {
+    //            return;
+    //        }
+    //    }
+
+    //    // Updates the URL in TextBoxAddress upon navigation.
+    //    private void webBrowser1_Navigated(object sender,
+    //        WebBrowserNavigatedEventArgs e)
+    //    {
+    //        toolStripTextBox1.Text = webBrowser1.Url.ToString();
+    //    }
+
+    //    // Navigates webBrowser1 to the previous page in the history.
+    //    private void backButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.GoBack();
+    //    }
+
+    //    // Disables the Back button at the beginning of the navigation history.
+    //    private void webBrowser1_CanGoBackChanged(object sender, EventArgs e)
+    //    {
+    //        backButton.Enabled = webBrowser1.CanGoBack;
+    //    }
+
+    //    // Navigates webBrowser1 to the next page in history.
+    //    private void forwardButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.GoForward();
+    //    }
+
+    //    // Disables the Forward button at the end of navigation history.
+    //    private void webBrowser1_CanGoForwardChanged(object sender, EventArgs e)
+    //    {
+    //        forwardButton.Enabled = webBrowser1.CanGoForward;
+    //    }
+
+    //    // Halts the current navigation and any sounds or animations on 
+    //    // the page.
+    //    private void stopButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.Stop();
+    //    }
+
+    //    // Reloads the current page.
+    //    private void refreshButton_Click(object sender, EventArgs e)
+    //    {
+    //        // Skip refresh if about:blank is loaded to avoid removing
+    //        // content specified by the DocumentText property.
+    //        if (!webBrowser1.Url.Equals("about:blank"))
+    //        {
+    //            webBrowser1.Refresh();
+    //        }
+    //    }
+
+    //    // Navigates webBrowser1 to the home page of the current user.
+    //    private void homeButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.GoHome();
+    //    }
+
+    //    // Navigates webBrowser1 to the search page of the current user.
+    //    private void searchButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.GoSearch();
+    //    }
+
+    //    // Prints the current document using the current print settings.
+    //    private void printButton_Click(object sender, EventArgs e)
+    //    {
+    //        webBrowser1.Print();
+    //    }
+
+    //    // Updates the status bar with the current browser status text.
+    //    private void webBrowser1_StatusTextChanged(object sender, EventArgs e)
+    //    {
+    //        toolStripStatusLabel1.Text = webBrowser1.StatusText;
+    //    }
+
+    //    // Updates the title bar with the current document title.
+    //    private void webBrowser1_DocumentTitleChanged(object sender, EventArgs e)
+    //    {
+    //        this.Text = webBrowser1.DocumentTitle;
+    //    }
+
+    //    // Exits the application.
+    //    private void exitToolStripMenuItem_Click(object sender, EventArgs e)
+    //    {
+    //        System.Windows.Forms.Application.Exit();
+    //    }
+
+    //    // The remaining code in this file provides basic form initialization and 
+    //    // includes a Main method. If you use the Visual Studio designer to create
+    //    // your form, you can use the designer generated code instead of this code, 
+    //    // but be sure to use the names shown in the variable declarations here,
+    //    // and be sure to attach the event handlers to the associated events. 
+
+    //    private WebBrowser webBrowser1;
+
+    //    private MenuStrip menuStrip1;
+    //    private ToolStripMenuItem fileToolStripMenuItem,
+    //        saveAsToolStripMenuItem, printToolStripMenuItem,
+    //        printPreviewToolStripMenuItem, exitToolStripMenuItem,
+    //        pageSetupToolStripMenuItem, propertiesToolStripMenuItem;
+    //    private ToolStripSeparator toolStripSeparator1, toolStripSeparator2;
+
+    //    private ToolStrip toolStrip1, toolStrip2;
+    //    private ToolStripTextBox toolStripTextBox1;
+    //    private ToolStripButton goButton, backButton,
+    //        forwardButton, stopButton, refreshButton,
+    //        homeButton, searchButton, printButton;
+
+    //    private StatusStrip statusStrip1;
+    //    private ToolStripStatusLabel toolStripStatusLabel1;
+
+    //    private void InitializeForm()
+    //    {
+    //        webBrowser1 = new WebBrowser();
+
+    //        menuStrip1 = new MenuStrip();
+    //        fileToolStripMenuItem = new ToolStripMenuItem();
+    //        saveAsToolStripMenuItem = new ToolStripMenuItem();
+    //        toolStripSeparator1 = new ToolStripSeparator();
+    //        printToolStripMenuItem = new ToolStripMenuItem();
+    //        printPreviewToolStripMenuItem = new ToolStripMenuItem();
+    //        toolStripSeparator2 = new ToolStripSeparator();
+    //        exitToolStripMenuItem = new ToolStripMenuItem();
+    //        pageSetupToolStripMenuItem = new ToolStripMenuItem();
+    //        propertiesToolStripMenuItem = new ToolStripMenuItem();
+
+    //        toolStrip1 = new ToolStrip();
+    //        goButton = new ToolStripButton();
+    //        backButton = new ToolStripButton();
+    //        forwardButton = new ToolStripButton();
+    //        stopButton = new ToolStripButton();
+    //        refreshButton = new ToolStripButton();
+    //        homeButton = new ToolStripButton();
+    //        searchButton = new ToolStripButton();
+    //        printButton = new ToolStripButton();
+
+    //        toolStrip2 = new ToolStrip();
+    //        toolStripTextBox1 = new ToolStripTextBox();
+
+    //        statusStrip1 = new StatusStrip();
+    //        toolStripStatusLabel1 = new ToolStripStatusLabel();
+
+    //        menuStrip1.Items.Add(fileToolStripMenuItem);
+
+    //        fileToolStripMenuItem.DropDownItems.AddRange(
+    //            new ToolStripItem[] {
+    //            saveAsToolStripMenuItem, toolStripSeparator1,
+    //            pageSetupToolStripMenuItem, printToolStripMenuItem,
+    //            printPreviewToolStripMenuItem, toolStripSeparator2,
+    //            propertiesToolStripMenuItem, exitToolStripMenuItem
+    //            });
+
+    //        fileToolStripMenuItem.Text = "&File";
+    //        saveAsToolStripMenuItem.Text = "Save &As...";
+    //        pageSetupToolStripMenuItem.Text = "Page Set&up...";
+    //        printToolStripMenuItem.Text = "&Print...";
+    //        printPreviewToolStripMenuItem.Text = "Print Pre&view...";
+    //        propertiesToolStripMenuItem.Text = "Properties";
+    //        exitToolStripMenuItem.Text = "E&xit";
+
+    //        printToolStripMenuItem.ShortcutKeys = Keys.Control | Keys.P;
+
+    //        saveAsToolStripMenuItem.Click +=
+    //            new System.EventHandler(saveAsToolStripMenuItem_Click);
+    //        pageSetupToolStripMenuItem.Click +=
+    //            new System.EventHandler(pageSetupToolStripMenuItem_Click);
+    //        printToolStripMenuItem.Click +=
+    //            new System.EventHandler(printToolStripMenuItem_Click);
+    //        printPreviewToolStripMenuItem.Click +=
+    //            new System.EventHandler(printPreviewToolStripMenuItem_Click);
+    //        propertiesToolStripMenuItem.Click +=
+    //            new System.EventHandler(propertiesToolStripMenuItem_Click);
+    //        exitToolStripMenuItem.Click +=
+    //            new System.EventHandler(exitToolStripMenuItem_Click);
+
+    //        toolStrip1.Items.AddRange(new ToolStripItem[] {
+    //        goButton, backButton, forwardButton, stopButton,
+    //        refreshButton, homeButton, searchButton, printButton});
+
+    //        goButton.Text = "Go";
+    //        backButton.Text = "Back";
+    //        forwardButton.Text = "Forward";
+    //        stopButton.Text = "Stop";
+    //        refreshButton.Text = "Refresh";
+    //        homeButton.Text = "Home";
+    //        searchButton.Text = "Search";
+    //        printButton.Text = "Print";
+
+    //        backButton.Enabled = false;
+    //        forwardButton.Enabled = false;
+
+    //        goButton.Click += new System.EventHandler(goButton_Click);
+    //        backButton.Click += new System.EventHandler(backButton_Click);
+    //        forwardButton.Click += new System.EventHandler(forwardButton_Click);
+    //        stopButton.Click += new System.EventHandler(stopButton_Click);
+    //        refreshButton.Click += new System.EventHandler(refreshButton_Click);
+    //        homeButton.Click += new System.EventHandler(homeButton_Click);
+    //        searchButton.Click += new System.EventHandler(searchButton_Click);
+    //        printButton.Click += new System.EventHandler(printButton_Click);
+
+    //        toolStrip2.Items.Add(toolStripTextBox1);
+    //        toolStripTextBox1.Size = new System.Drawing.Size(250, 25);
+    //        toolStripTextBox1.KeyDown +=
+    //            new KeyEventHandler(toolStripTextBox1_KeyDown);
+    //        toolStripTextBox1.Click +=
+    //            new System.EventHandler(toolStripTextBox1_Click);
+
+    //        statusStrip1.Items.Add(toolStripStatusLabel1);
+
+    //        webBrowser1.Dock = DockStyle.Fill;
+    //        webBrowser1.Navigated +=
+    //            new WebBrowserNavigatedEventHandler(webBrowser1_Navigated);
+
+    //        Controls.AddRange(new System.Windows.Forms.Control[] {
+    //        webBrowser1, toolStrip2, toolStrip1,
+    //        menuStrip1, statusStrip1, menuStrip1 });
+    //    }
+
+    //    [STAThread]
+    //    static void Main()
+    //    {
+            
+    //    }
+    //}
+}
